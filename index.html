@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --bg:#EDF1F2; --ink:#14272E; --sub:#5B6E75; --teal:#0F5B66; --teal-d:#0A434B;
+    --rec:#B93A2A; --off:#CBD5D8; --off-ink:#7C8D93; --card:#FFFFFF;
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+  .wrap{max-width:480px;margin:0 auto;padding:16px}
+  .who{background:var(--card);border-left:6px solid var(--off);border-radius:6px;padding:14px 16px;margin-bottom:16px}
+  .who.on{border-left-color:var(--teal)}
+  .who.rec{border-left-color:var(--rec)}
+  .who small{display:block;color:var(--sub);font-size:13px;margin-bottom:4px}
+  .who input{width:100%;border:0;background:transparent;font-weight:700;font-size:26px;line-height:1.2;font-family:inherit;color:var(--ink);padding:0;outline:none}
+  .who input:disabled{color:var(--off-ink)}
+  .msg{min-height:22px;font-size:14px;color:var(--sub);margin:0 2px 12px}
+  .msg.err{color:#fff;background:var(--rec);padding:10px 12px;border-radius:6px;font-weight:600;line-height:1.5}
+  button.big{display:block;width:100%;height:76px;margin-bottom:12px;border:0;border-radius:10px;font-weight:700;font-size:20px;font-family:inherit;background:var(--teal);color:#fff}
+  button.big:active:not(:disabled){background:var(--teal-d)}
+  button.big:disabled{background:var(--off);color:var(--off-ink)}
+  button.big.stop{background:var(--rec)}
+  button.big.ghost{background:var(--card);color:var(--teal);border:2px solid var(--teal)}
+  button.big.ghost:disabled{background:transparent;border-color:var(--off);color:var(--off-ink)}
+  button:focus-visible,input:focus-visible{outline:3px solid #7FB7C0;outline-offset:2px}
+  .timer{font-variant-numeric:tabular-nums}
+  .hide{display:none}
+  .item{display:flex;gap:14px;align-items:center;width:100%;text-align:left;background:var(--card);border:0;border-radius:8px;padding:16px;margin-bottom:8px;font-weight:600;font-size:18px;font-family:inherit;color:var(--ink)}
+  .item .n{min-width:28px;color:var(--teal);font-weight:700}
+  .item .t{margin-left:auto;color:var(--sub);font-weight:400;font-size:14px}
+  .note{background:var(--card);border-radius:8px;padding:18px;white-space:pre-wrap;line-height:1.7;font-size:16px}
+  .note h2{margin:0 0 12px;font-size:22px}
+  .back{background:none;border:0;color:var(--teal);font-weight:600;font-size:16px;font-family:inherit;padding:8px 0;margin-bottom:8px}
+  @media (prefers-reduced-motion:no-preference){ .who{transition:border-color .2s} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 메인 -->
+  <div id="main">
+    <div class="who" id="who">
+      <small id="whoLabel">현재 환자</small>
+      <input id="name" placeholder="접수증을 촬영하세요" disabled autocomplete="off">
+    </div>
+    <p class="msg" id="msg"></p>
+    <input type="file" id="file" accept="image/*" capture="environment" class="hide">
+    <button class="big" id="b1">접수증 촬영</button>
+    <button class="big" id="b2" disabled>CONSULT 시작</button>
+    <button class="big stop" id="b3" disabled>CONSULT 종료</button>
+    <button class="big ghost" id="b4">내역 보기</button>
+  </div>
+
+  <!-- 목록 -->
+  <div id="list" class="hide">
+    <button class="back" id="back1">← 메인</button>
+    <div id="items"></div>
+  </div>
+
+  <!-- 상세 -->
+  <div id="detail" class="hide">
+    <button class="back" id="back2">← 목록</button>
+    <div class="note"><h2 id="dName"></h2><div id="dText"></div></div>
+  </div>
+
+</div>
+<script>
+/* 외부 호스팅용: Apps Script 웹앱 주소를 아래에 붙여 넣으세요 */
+const API_URL = 'https://script.google.com/macros/s/https://script.google.com/macros/s/AKfycbyKxxGAmM_D88j2XWDOhicUF7vvJ0HoYBBLj2sQqwh9q3a-KYOPJ0fGva5pcQuDdxc7/exec';
+
+function getToken(){
+  let t=''; try{ t=localStorage.getItem('tok')||''; }catch(e){}
+  if(!t){ t=(prompt('접속 토큰을 입력하세요 (처음 한 번만)')||'').trim(); try{ localStorage.setItem('tok',t); }catch(e){} }
+  return t;
+}
+async function apiCall(fn,args){
+  const res = await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:getToken(),fn:fn,args:args})});
+  const j = await res.json();
+  if(!j.ok){ if(String(j.error).indexOf('인증 실패')>=0){ try{localStorage.removeItem('tok');}catch(e){} } throw new Error(j.error); }
+  return j.data;
+}
+function makeRunner(){
+  let ok=()=>{}, bad=()=>{};
+  const r = new Proxy({},{get(_,k){
+    if(k==='withSuccessHandler') return f=>{ok=f;return r;};
+    if(k==='withFailureHandler') return f=>{bad=f;return r;};
+    return (...a)=>{ apiCall(k,a).then(ok,bad); };
+  }});
+  return r;
+}
+const google={script:{get run(){return makeRunner();}}};
+</script>
+<script>
+const $ = id => document.getElementById(id);
+const MAX_SEC = 360; // 6분 자동 종료 (전송 용량 한도 때문)
+let phase = 'idle';  // idle | named | recording | busy
+let recorder = null, chunks = [], stream = null, tick = null, startedAt = 0, recName = '';
+
+function msg(t, isErr){ const m=$('msg'); m.textContent=t||''; m.className='msg'+(isErr?' err':''); }
+function show(id){ ['main','list','detail'].forEach(x=>$(x).classList.toggle('hide',x!==id)); }
+
+function render(){
+  const hasName = $('name').value.trim().length > 0;
+  $('b1').disabled = !(phase==='idle' || phase==='named');
+  $('b2').disabled = phase!=='named';
+  $('b3').disabled = phase!=='recording';
+  $('b4').disabled = !(phase==='idle' || phase==='named');
+  $('name').disabled = phase!=='named';
+  $('who').className = 'who' + (phase==='recording' ? ' rec' : (phase==='named' ? ' on' : ''));
+}
+$('name').addEventListener('input', render);
+
+/* ---------- 1. 접수증 촬영 ---------- */
+$('b1').onclick = () => $('file').click();
+$('file').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if(!f) return;
+  phase = 'busy'; render(); msg('접수증에서 이름을 읽는 중…');
+  try{
+    const b64 = await shrink(f);
+    google.script.run
+      .withSuccessHandler(name => {
+        $('name').value = name; phase = 'named'; render();
+        msg(name ? '이름이 맞는지 확인하세요. 틀리면 직접 고칠 수 있습니다.' : '이름을 읽지 못했습니다. 직접 입력하세요.', !name);
+      })
+      .withFailureHandler(er => { phase = 'idle'; render(); msg(er.message, true); })
+      .recognizeName(b64, 'image/jpeg');
+  }catch(er){ phase='idle'; render(); msg('사진을 처리하지 못했습니다: '+er.message, true); }
+};
+
+function shrink(file){
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, 1600/Math.max(img.width,img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width*s); c.height = Math.round(img.height*s);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg',0.85).split(',')[1]);
+    };
+    img.onerror = () => rej(new Error('이미지 로드 실패'));
+    img.src = url;
+  });
+}
+
+/* ---------- 2. CONSULT 시작 ---------- */
+$('b2').onclick = async () => {
+  recName = $('name').value.trim();
+  if(!recName){ msg('환자 이름 칸이 비어 있습니다. 이름을 입력한 뒤 다시 누르세요.', true); $('name').focus(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){
+    msg('이 화면에서는 마이크 녹음을 쓸 수 없습니다. (mediaDevices/MediaRecorder 없음)', true); return;
+  }
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+  }catch(er){
+    msg('마이크를 열 수 없습니다 ['+er.name+']. 브라우저·기기의 마이크 권한을 확인하세요. 권한을 허용해도 안 되면 Apps Script 화면 안에서는 마이크가 막힌 것입니다.', true); return;
+  }
+  chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = ev => { if(ev.data.size) chunks.push(ev.data); };
+  recorder.onstop = onStopped;
+  recorder.start(1000);
+  startedAt = Date.now();
+  phase = 'recording'; render();
+  tick = setInterval(() => {
+    const s = Math.floor((Date.now()-startedAt)/1000);
+    msg('녹음 중  '+Math.floor(s/60)+':'+String(s%60).padStart(2,'0'));
+    if(s >= MAX_SEC) stopRec();
+  }, 500);
+};
+
+/* ---------- 3. CONSULT 종료 ---------- */
+$('b3').onclick = stopRec;
+function stopRec(){
+  if(!recorder || recorder.state==='inactive') return;
+  clearInterval(tick);
+  phase = 'busy'; render(); msg('녹음을 정리하는 중…');
+  recorder.stop();
+  stream.getTracks().forEach(t=>t.stop());
+}
+
+async function onStopped(){
+  try{
+    const blob = new Blob(chunks, {type: recorder.mimeType || 'audio/webm'});
+    const b64 = await toWav16k(blob);
+    msg('상담 내용을 요약하는 중… (수십 초 걸릴 수 있습니다)');
+    google.script.run
+      .withSuccessHandler(() => {
+        phase='idle'; $('name').value=''; render(); msg('저장되었습니다: '+recName);
+      })
+      .withFailureHandler(er => {
+        phase='named'; render(); msg('요약 실패: '+er.message+' (이름은 유지됩니다. 다시 시작할 수 있습니다)', true);
+      })
+      .summarizeConsult(recName, b64, 'audio/wav');
+  }catch(er){
+    phase='named'; render(); msg('녹음 처리 실패: '+er.message, true);
+  }
+}
+
+/* 녹음 → 16kHz 모노 WAV → base64 (브라우저별 녹음 형식 차이를 없앰) */
+async function toWav16k(blob){
+  const ac = new (window.AudioContext||window.webkitAudioContext)();
+  const dec = await ac.decodeAudioData(await blob.arrayBuffer());
+  ac.close();
+  const oc = new OfflineAudioContext(1, Math.ceil(dec.duration*16000), 16000);
+  const src = oc.createBufferSource(); src.buffer = dec; src.connect(oc.destination); src.start();
+  const f32 = (await oc.startRendering()).getChannelData(0);
+  const n = f32.length, v = new DataView(new ArrayBuffer(44+n*2));
+  const w = (o,t)=>{ for(let i=0;i<t.length;i++) v.setUint8(o+i,t.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4,36+n*2,true); w(8,'WAVE'); w(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,16000,true); v.setUint32(28,32000,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w(36,'data'); v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){ const x=Math.max(-1,Math.min(1,f32[i])); v.setInt16(44+i*2, x<0?x*0x8000:x*0x7FFF, true); }
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('변환 실패'));
+    r.readAsDataURL(new Blob([v],{type:'audio/wav'}));
+  });
+}
+
+/* ---------- 4. 내역 보기 ---------- */
+$('b4').onclick = () => {
+  show('list'); $('items').textContent = '불러오는 중…';
+  google.script.run
+    .withSuccessHandler(rows => {
+      const box = $('items'); box.textContent = '';
+      if(!rows.length){ box.textContent = '오늘 저장된 상담이 없습니다.'; return; }
+      rows.forEach((r,i) => {
+        const b = document.createElement('button'); b.className = 'item';
+        const n = document.createElement('span'); n.className='n'; n.textContent = i+1;
+        const nm = document.createElement('span'); nm.textContent = r.name;
+        const t = document.createElement('span'); t.className='t'; t.textContent = r.time;
+        b.append(n,nm,t);
+        b.onclick = () => openDetail(r.row);
+        box.appendChild(b);
+      });
+    })
+    .withFailureHandler(er => { $('items').textContent = '불러오지 못했습니다: '+er.message; })
+    .getList();
+};
+function openDetail(row){
+  show('detail'); $('dName').textContent=''; $('dText').textContent='불러오는 중…';
+  google.script.run
+    .withSuccessHandler(d => { $('dName').textContent = d.name; $('dText').textContent = d.text; })
+    .withFailureHandler(er => { $('dText').textContent = er.message; })
+    .getDetail(row);
+}
+$('back1').onclick = () => show('main');
+$('back2').onclick = () => show('list');
+
+render();
+</script>
+</body>
+</html>
